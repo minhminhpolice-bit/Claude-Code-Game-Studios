@@ -1,0 +1,1218 @@
+<!doctype html>
+<!-- PROTOTYPE - NOT FOR PRODUCTION -->
+<!-- Question: Chuỗi gom tu vi → liều đột phá → chuyển thế có cuốn người chơi trong một buổi không? -->
+<!-- Date: 2026-11-25 -->
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mặc Tiên Lộ</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #2a2622; overflow: hidden; }
+  body { font-variant-numeric: tabular-nums; }
+  canvas { display: block; margin: 0 auto; touch-action: manipulation; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="config.js"></script>
+<script>
+'use strict';
+// Mặc Tiên Lộ: an idle cultivation game drawn as one ink-wash painting.
+// Keep the fixed step, the clock hook, window.game and the play and figures scenes.
+
+// ---- Built to be checked ----------------------------------------------------------------
+const params = new URLSearchParams(location.search);
+const tune = new Proxy({}, { get: (_, k) => CONFIG[k].value }); // live: tune.speed is CONFIG.speed.value
+const STEP = 1 / 60;            // simulation step in seconds
+const W = 1280, H = 720;        // logical size
+const PIXEL = false;
+const FONT = '"Noto Serif", "Times New Roman", Georgia, serif';
+const TITLE = 'Mặc Tiên Lộ';
+const CONTROLS = [
+  'Bấm "Thiền định" hoặc Space: hút linh khí',
+  'Bấm một nguồn tu luyện hoặc phím 1–8: mua',
+  'Bấm "Đột phá" hoặc B: thử lên cảnh giới mới',
+  'P: tạm dừng · M: tắt tiếng',
+];
+const clock = window.GAME_CLOCK || { now: () => performance.now() / 1000 }; // a check may inject one
+const CHEAP = params.get('render') === 'cheap';
+let seed;
+function rng() { // mulberry32; every gameplay random call reads this, never Math.random
+  seed = (seed + 0x6D2B79F5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+// Visual-only randomness (mist, particles): its own seeded stream so gameplay rolls stay put.
+let vseed = 777;
+function vrng() {
+  vseed = (vseed + 0x6D2B79F5) | 0;
+  let t = Math.imul(vseed ^ (vseed >>> 15), vseed | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+const events = [];
+
+// ---- Screen ---------------------------------------------------------------------------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let viewScale = 1;
+function fit() {
+  const k = Math.min(innerWidth / W, innerHeight / H);
+  const s = k;
+  const r = s * (devicePixelRatio || 1);
+  viewScale = s;
+  canvas.width = Math.round(W * r); canvas.height = Math.round(H * r);
+  canvas.style.width = Math.round(W * s) + 'px'; canvas.style.height = Math.round(H * s) + 'px';
+  canvas.style.marginTop = Math.max(0, Math.floor((innerHeight - H * s) / 2)) + 'px';
+  ctx.setTransform(r, 0, 0, r, 0, 0); ctx.imageSmoothingEnabled = true;
+}
+addEventListener('resize', fit); fit();
+function clear(c) { ctx.fillStyle = c; ctx.fillRect(0, 0, W, H); }
+function text(s, x, y, size, c, align = 'center', weight = '') {
+  ctx.fillStyle = c; ctx.font = `${weight} ${size}px ${FONT}`; ctx.textAlign = align;
+  ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
+}
+
+// ---- Palette: ink on old paper, cinnabar for seals ------------------------------------
+const INK = '#1d1a17', INK2 = '#4a443d', PAPER = '#efe6d2', PAPER2 = '#e4d8bd', CINNABAR = '#b8322a';
+const REALMS = ['Phàm Nhân', 'Luyện Khí', 'Trúc Cơ', 'Kết Đan', 'Nguyên Anh', 'Hóa Thần',
+  'Luyện Hư', 'Hợp Thể', 'Đại Thừa', 'Độ Kiếp'];
+const ASCEND = 'Phi Thăng';
+// Aura colour per realm: white, green, teal, blue, gold, orange, crimson, purple, violet, pale gold.
+const AURA = ['#d8d2c4', '#7fae7a', '#5fa89c', '#5b84c4', '#d6a843', '#e0803a', '#c8483c',
+  '#9a56b8', '#7b5fd6', '#f2d98a'];
+
+// ---- Sources ---------------------------------------------------------------------------
+const SOURCES = [
+  { name: 'Thổ Nạp Quyết', unlock: 0, draw: drawScroll },
+  { name: 'Linh Thảo Viên', unlock: 0, draw: drawHerb },
+  { name: 'Tụ Linh Liên', unlock: 1, draw: drawLotus },
+  { name: 'Luyện Đan Lô', unlock: 2, draw: drawFurnace },
+  { name: 'Linh Mạch', unlock: 3, draw: drawCrystal },
+  { name: 'Tụ Linh Trận', unlock: 4, draw: drawArray },
+  { name: 'Ngự Phi Kiếm', unlock: 5, draw: drawSword },
+  { name: 'Tiên Hạc', unlock: 6, draw: drawCrane },
+];
+const MILESTONES = [10, 25, 50, 100, 200];
+const srcCost0 = i => tune['src' + (i + 1) + '_cost'];
+const srcRate0 = i => tune['src' + (i + 1) + '_rate'];
+
+// ---- Number names: short Vietnamese ------------------------------------------------------
+const UNITS = [[1e18, 'tỉ tỉ'], [1e15, 'triệu tỉ'], [1e12, 'nghìn tỉ'], [1e9, 'tỉ'], [1e6, 'triệu'], [1e3, 'nghìn']];
+function fmt(n) {
+  if (!isFinite(n)) return 'vô lượng';
+  if (n < 0) return '-' + fmt(-n);
+  if (n >= 1e21) return n.toExponential(2).replace('.', ',');
+  for (const [u, name] of UNITS) {
+    if (n >= u) {
+      const v = n / u;
+      const s = v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : Math.floor(v).toString();
+      return s.replace('.', ',') + ' ' + name;
+    }
+  }
+  if (n < 10) return (Math.floor(n * 10) / 10).toString().replace('.', ',');
+  return Math.floor(n).toString();
+}
+function fmtTime(sec) {
+  sec = Math.floor(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+  if (h > 0) return `${h} giờ ${m} phút`;
+  if (m > 0) return `${m} phút ${s} giây`;
+  return `${s} giây`;
+}
+
+// ---- Input -------------------------------------------------------------------------------
+const down = new Set(), hit = new Set();
+const pressed = code => hit.has(code);
+addEventListener('keydown', e => {
+  startAudio();
+  if (!e.repeat) { down.add(e.code); hit.add(e.code); }
+  if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
+});
+addEventListener('keyup', e => down.delete(e.code));
+const clicks = []; // pointer presses in logical coords, handled on the next step
+const pointer = { x: -1, y: -1 };
+function toLogical(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+canvas.addEventListener('pointerdown', e => { startAudio(); const p = toLogical(e); clicks.push(p); });
+canvas.addEventListener('pointermove', e => { const p = toLogical(e); pointer.x = p.x; pointer.y = p.y; });
+addEventListener('blur', () => down.clear());
+const inRect = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+
+// ---- Audio -----------------------------------------------------------------------------
+let audio = null, muted = false;
+function startAudio() {
+  try {
+    if (!audio) {
+      const ac = window.GAME_AUDIO || new (window.AudioContext || window.webkitAudioContext)();
+      const out = ac.createGain(); out.gain.value = muted ? 0 : tune.volume;
+      out.connect(ac.destination); audio = { ac, out };
+    }
+    if (audio.ac.state === 'suspended') audio.ac.resume();
+  } catch (e) { /* no audio */ }
+}
+function setMuted(m) { muted = m; if (audio) audio.out.gain.value = m ? 0 : tune.volume; }
+addEventListener('tune', () => setMuted(muted));
+function tone(freq, dur, type = 'sine', vol = 0.25, delay = 0) {
+  if (!audio || muted) return;
+  const t = audio.ac.currentTime + delay, o = audio.ac.createOscillator(), g = audio.ac.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(audio.out); o.start(t); o.stop(t + dur + 0.02);
+}
+const PENTA = [262, 294, 330, 392, 440, 523, 587, 659, 784, 880];
+const sfx = {
+  click() { tone(PENTA[Math.floor(vrng() * 5) + 3], 0.18, 'sine', 0.12); },
+  buy() { tone(196, 0.12, 'triangle', 0.25); tone(392, 0.2, 'sine', 0.12, 0.03); },
+  no() { tone(110, 0.12, 'square', 0.06); },
+  milestone() { [659, 784, 988, 1319].forEach((f, i) => tone(f, 0.5, 'sine', 0.14, i * 0.07)); },
+  success() { [262, 330, 392, 523, 659, 784].forEach((f, i) => tone(f, 0.7, 'triangle', 0.16, i * 0.09)); },
+  fail() { tone(98, 0.8, 'sawtooth', 0.12); tone(73, 1.0, 'sine', 0.2, 0.1); },
+  prestige() { [523, 392, 330, 262, 196, 262, 392, 523, 784].forEach((f, i) => tone(f, 0.6, 'sine', 0.13, i * 0.1)); },
+};
+
+// ---- State and rules ---------------------------------------------------------------------
+let scene, state;
+const SAVE_KEY = 'mac-tien-lo-v1';
+function freshState() {
+  return {
+    t: 0, score: 0, gained: '',
+    lk: 0,            // linh khí: spent on sources
+    tuvi: 0,          // tu vi: filled by the same flow, spent on breakthroughs
+    realm: 0,
+    owned: SOURCES.map(() => 0),
+    exp: 0,           // Kinh nghiệm: failures at this realm
+    tamma: 0,         // seconds of tâm ma left
+    daotam: 0,        // Đạo tâm: carries over every Chuyển thế
+    lives: 0,         // how many Chuyển thế
+    lifeLK: 0,        // linh khí earned this life
+    totalTime: 0,     // seconds played over all lives
+    lifeTime: 0,
+    fails: 0, tries: 0,
+    won: false,
+    shownLK: 0, shownTV: 0,
+    fx: [], parts: [], floats: [], banner: null, away: null,
+    saveT: 0, shake: 0, flash: null,
+  };
+}
+function reset() {
+  seed = Number(params.get('seed')) || CONFIG.seed;
+  state = freshState();
+}
+function load() {
+  if (params.get('fresh') === '1') return false;
+  let raw = null;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
+  if (!raw) return false;
+  try {
+    const d = JSON.parse(raw);
+    const s = freshState();
+    for (const k of ['lk', 'tuvi', 'realm', 'exp', 'tamma', 'daotam', 'lives', 'lifeLK', 'totalTime', 'lifeTime', 'fails', 'tries', 'won']) if (d[k] !== undefined) s[k] = d[k];
+    if (Array.isArray(d.owned)) s.owned = SOURCES.map((_, i) => d.owned[i] || 0);
+    if (typeof d.seed === 'number') seed = d.seed;
+    state = s;
+    // Bế quan: what was earned while the tab was closed (the one place the real clock is read).
+    const away = Math.min((Date.now() - (d.time || Date.now())) / 1000, tune.offline_cap_h * 3600);
+    if (away >= tune.offline_min_s && !s.won) {
+      const g = production(true) * away * tune.offline_rate;
+      earn(g);
+      s.away = { secs: away, gain: g, t: 0 };
+    }
+    s.shownLK = s.lk; s.shownTV = s.tuvi;
+    return true;
+  } catch (e) { return false; }
+}
+function save() {
+  if (!state) return;
+  const s = state;
+  const d = { time: Date.now(), seed };
+  for (const k of ['lk', 'tuvi', 'realm', 'owned', 'exp', 'tamma', 'daotam', 'lives', 'lifeLK', 'totalTime', 'lifeTime', 'fails', 'tries', 'won']) d[k] = s[k];
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(d)); } catch (e) { /* private mode: no save */ }
+}
+function wipeSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ } }
+function hasSave() { try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; } }
+addEventListener('beforeunload', () => { if (scene === 'play' || scene === 'pause') save(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && (scene === 'play' || scene === 'pause')) save(); });
+
+function milestonesHit(n) { return MILESTONES.filter(m => n >= m).length; }
+function nextMilestone(n) { return MILESTONES.find(m => n < m); }
+function srcCost(i) { return srcCost0(i) * Math.pow(tune.cost_growth, state.owned[i]); }
+function srcEach(i) { // linh khí per second from one copy, with every multiplier but tâm ma
+  return srcRate0(i) * Math.pow(tune.milestone_mult, milestonesHit(state.owned[i])) * globalMult(true);
+}
+function globalMult(noTamma) {
+  let m = Math.pow(tune.realm_mult, state.realm) * (1 + state.daotam * tune.daotam_bonus);
+  if (!noTamma && state.tamma > 0) m *= tune.tamma_mult;
+  return m;
+}
+function production(noTamma) {
+  let p = 0;
+  for (let i = 0; i < SOURCES.length; i++) {
+    if (!state.owned[i]) continue;
+    p += srcRate0(i) * state.owned[i] * Math.pow(tune.milestone_mult, milestonesHit(state.owned[i]));
+  }
+  return p * globalMult(noTamma);
+}
+function clickGain() { return tune.click_base * globalMult() + tune.click_share * production(); }
+function threshold(r = state.realm) { return tune.tuvi_base * Math.pow(tune.tuvi_growth, r); }
+function baseChance(r = state.realm) {
+  if (r === 0) return 1;
+  return Math.max(tune.chance_min, tune.chance_start - tune.chance_drop * (r - 1));
+}
+function chance() {
+  const T = threshold();
+  const over = Math.max(0, state.tuvi / T - 1);
+  const c = baseChance() + tune.overflow_bonus * over + tune.exp_bonus * state.exp;
+  return Math.min(Math.max(tune.chance_cap, baseChance()), c);
+}
+function canBreak() { return state.tuvi >= threshold() && !state.won; }
+function prestigeGain() { return Math.floor(Math.sqrt(state.lifeLK / tune.prestige_div)); }
+function canPrestige() { return state.realm >= tune.prestige_min_realm && prestigeGain() >= 1 && !state.won; }
+function sourceVisible(i) { return SOURCES[i].unlock <= state.realm || state.owned[i] > 0; }
+
+function earn(g) { state.lk += g; state.tuvi += g; state.lifeLK += g; }
+
+// Where each source stands in the painting.
+const SPOT = [
+  { x: 150, y: 590, s: 1 },    // scroll on its little table
+  { x: 262, y: 625, s: 1 },    // herb garden
+  { x: 575, y: 630, s: 1 },    // lotus pond
+  { x: 655, y: 520, s: 1 },    // furnace
+  { x: 92, y: 470, s: 1 },     // spirit vein on the cliff
+  { x: 380, y: 568, s: 1 },    // array under the cultivator
+  { x: 380, y: 330, s: 1 },    // sword circling above
+  { x: 560, y: 175, s: 1 },    // crane in the sky
+];
+const HERO = { x: 380, y: 520 };
+
+function meditate() {
+  const g = clickGain();
+  earn(g);
+  state.floats.push({ x: HERO.x + (vrng() - 0.5) * 60, y: HERO.y - 120, t: 0, str: '+' + fmt(g), c: INK });
+  for (let k = 0; k < 4; k++) spawnWisp(HERO.x + (vrng() - 0.5) * 160, HERO.y - 40 - vrng() * 120, true);
+  sfx.click();
+  events.push({ type: 'meditate', gain: g });
+}
+function buy(i) {
+  if (!sourceVisible(i)) return;
+  const c = srcCost(i);
+  if (state.lk < c) { sfx.no(); return; }
+  state.lk -= c;
+  const before = milestonesHit(state.owned[i]);
+  state.owned[i]++;
+  state.shownLK = Math.min(state.shownLK, state.lk);
+  const sp = SPOT[i];
+  state.fx.push({ type: 'ring', x: sp.x, y: sp.y - 20, t: 0, dur: 0.6, c: INK2, r: 50 });
+  if (milestonesHit(state.owned[i]) > before) {
+    state.fx.push({ type: 'ring', x: sp.x, y: sp.y - 20, t: 0, dur: 1.2, c: AURA[Math.max(1, state.realm)], r: 140 });
+    state.floats.push({ x: sp.x, y: sp.y - 70, t: 0, str: `${SOURCES[i].name} ×${tune.milestone_mult}!`, c: CINNABAR, big: true });
+    sfx.milestone();
+    events.push({ type: 'milestone', src: i, owned: state.owned[i] });
+  } else sfx.buy();
+  events.push({ type: 'buy', src: i, owned: state.owned[i] });
+}
+function breakthrough() {
+  if (!canBreak()) { sfx.no(); return; }
+  const c = chance();
+  state.tries++;
+  const roll = rng();
+  if (roll < c) {
+    state.realm++;
+    state.tuvi = 0; state.exp = 0; state.tamma = 0;
+    state.shownTV = 0;
+    if (state.realm >= REALMS.length) { // Độ Kiếp passed: Phi Thăng
+      state.realm = REALMS.length - 1;
+      state.won = true;
+      state.gained = `${ASCEND} sau ${fmtTime(state.totalTime)} · ${state.lives} lần chuyển thế`;
+      state.flash = { t: 0, dur: 2.5, c: '#fff8dc' };
+      sfx.success();
+      events.push({ type: 'ascend' });
+      save();
+      scene = 'results';
+      return;
+    }
+    state.flash = { t: 0, dur: 1.2, c: '#fffdf2' };
+    state.fx.push({ type: 'ring', x: HERO.x, y: HERO.y - 60, t: 0, dur: 1.6, c: AURA[state.realm], r: 420 });
+    if (state.realm >= 4) state.fx.push({ type: 'bolt', t: 0, dur: 0.6, seed: Math.floor(vrng() * 1e6) });
+    state.banner = { t: 0, dur: 3.2, str: `Đột phá thành công · ${REALMS[state.realm]}`, sub: `Mọi nguồn tu luyện ×${tune.realm_mult}` + (SOURCES.some(s => s.unlock === state.realm) ? ` · mở ${SOURCES.find(s => s.unlock === state.realm).name}` : ''), c: INK };
+    sfx.success();
+    events.push({ type: 'breakthrough', ok: true, realm: state.realm, chance: c });
+  } else {
+    state.fails++;
+    state.tuvi *= 1 - tune.fail_loss;
+    state.shownTV = Math.min(state.shownTV, state.tuvi);
+    state.exp++;
+    state.tamma = tune.tamma_time;
+    state.shake = 0.6;
+    state.flash = { t: 0, dur: 0.9, c: '#2a1414' };
+    state.fx.push({ type: 'bolt', t: 0, dur: 0.5, seed: Math.floor(vrng() * 1e6), dark: true });
+    state.banner = { t: 0, dur: 3.2, str: 'Đột phá thất bại · tâm ma xâm nhập', sub: `Mất ${Math.round(tune.fail_loss * 100)}% tu vi · lần sau +${Math.round(tune.exp_bonus * 100)}% cơ hội`, c: CINNABAR };
+    sfx.fail();
+    events.push({ type: 'breakthrough', ok: false, realm: state.realm, chance: c });
+  }
+}
+function prestige() {
+  if (!canPrestige()) { sfx.no(); return; }
+  const g = prestigeGain();
+  const keep = { daotam: state.daotam + g, lives: state.lives + 1, totalTime: state.totalTime, fails: state.fails, tries: state.tries };
+  const s = freshState();
+  Object.assign(s, keep);
+  state = s;
+  state.flash = { t: 0, dur: 1.8, c: '#f6efe0' };
+  state.banner = { t: 0, dur: 4, str: `Chuyển thế · kiếp thứ ${state.lives + 1}`, sub: `Đạo tâm ${state.daotam}: mọi nguồn +${Math.round(state.daotam * tune.daotam_bonus * 100)}%`, c: INK };
+  sfx.prestige();
+  events.push({ type: 'prestige', daotam: state.daotam });
+  save();
+}
+
+// ---- Layout of the right-hand panel and the painting buttons -----------------------------
+const PANEL = { x: 778, y: 14, w: 488, h: 692 };
+const BTN_MEDITATE = { x: 280, y: 648, w: 200, h: 50 };
+const BTN_BREAK = { x: PANEL.x + 20, y: 196, w: PANEL.w - 40, h: 54 };
+const BTN_PRESTIGE = { x: 18, y: 652, w: 210, h: 50 };
+const ROW0 = 300, ROWH = 46;
+function rowRect(k) { return { x: PANEL.x + 14, y: ROW0 + k * ROWH, w: PANEL.w - 28, h: ROWH - 6 }; }
+function visibleRows() { // indices shown in the list: unlocked ones plus the next locked one
+  const out = [];
+  for (let i = 0; i < SOURCES.length; i++) {
+    if (sourceVisible(i)) out.push({ i, locked: false });
+    else { out.push({ i, locked: true }); break; }
+  }
+  return out;
+}
+
+// ---- Effects ---------------------------------------------------------------------------
+function spawnWisp(x, y, fast) {
+  state.parts.push({ x, y, t: 0, dur: fast ? 0.9 : 2.5 + vrng() * 1.5, sx: x, sy: y, wob: vrng() * 6.28 });
+}
+function updateFx(dt) {
+  const s = state;
+  for (const f of s.fx) f.t += dt;
+  s.fx = s.fx.filter(f => f.t < f.dur);
+  for (const f of s.floats) { f.t += dt; f.y -= 40 * dt; }
+  s.floats = s.floats.filter(f => f.t < 1.4);
+  for (const p of s.parts) p.t += dt;
+  s.parts = s.parts.filter(p => p.t < p.dur);
+  // idle wisps drift toward the cultivator, more as the flow grows
+  const flow = Math.min(6, 0.6 + Math.log10(1 + production()) * 0.7);
+  if (!CHEAP && vrng() < flow * dt && s.parts.length < 60) {
+    const a = vrng() * Math.PI * 2;
+    spawnWisp(HERO.x + Math.cos(a) * 300, HERO.y - 80 + Math.sin(a) * 180, false);
+  }
+  if (s.banner) { s.banner.t += dt; if (s.banner.t > s.banner.dur) s.banner = null; }
+  if (s.flash) { s.flash.t += dt; if (s.flash.t > s.flash.dur) s.flash = null; }
+  if (s.away) { s.away.t += dt; if (s.away.t > 7) s.away = null; }
+  s.shake = Math.max(0, s.shake - dt);
+  const k = Math.min(1, dt * tune.count_speed);
+  s.shownLK += (s.lk - s.shownLK) * k; if (s.lk < s.shownLK) s.shownLK = s.lk;
+  s.shownTV += (s.tuvi - s.shownTV) * k; if (s.tuvi < s.shownTV) s.shownTV = s.tuvi;
+}
+
+// ---- Drawing: the painting ---------------------------------------------------------------
+// Paper grain and mountains are fixed per seed: built once into an offscreen canvas.
+let paperCanvas = null;
+function buildPaper() {
+  paperCanvas = document.createElement('canvas');
+  paperCanvas.width = W; paperCanvas.height = H;
+  const g = paperCanvas.getContext('2d');
+  g.fillStyle = PAPER; g.fillRect(0, 0, W, H);
+  const save = vseed; vseed = 4242;
+  for (let i = 0; i < (CHEAP ? 1500 : 9000); i++) {
+    const x = vrng() * W, y = vrng() * H, a = vrng() * 0.06;
+    g.fillStyle = vrng() < 0.5 ? `rgba(120,95,60,${a})` : `rgba(255,255,245,${a * 1.5})`;
+    g.fillRect(x, y, 1 + vrng() * 2, 1 + vrng() * 2);
+  }
+  // fibres
+  g.strokeStyle = 'rgba(120,100,70,0.05)'; g.lineWidth = 1;
+  for (let i = 0; i < 260; i++) {
+    const x = vrng() * W, y = vrng() * H;
+    g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + vrng() * 20, y + vrng() * 8, x + 10 + vrng() * 30, y + (vrng() - 0.5) * 10); g.stroke();
+  }
+  // vignette
+  const v = g.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, H * 1.05);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(90,60,30,0.22)');
+  g.fillStyle = v; g.fillRect(0, 0, W, H);
+  vseed = save;
+}
+let ridges = null;
+function buildRidges() {
+  const save = vseed; vseed = 99;
+  ridges = [];
+  const layers = [
+    { base: 300, amp: 170, rough: 0.55, alpha: 0.16, mist: 0.9 },
+    { base: 400, amp: 140, rough: 0.6, alpha: 0.28, mist: 0.8 },
+    { base: 520, amp: 90, rough: 0.55, alpha: 0.5, mist: 0.6 },
+  ];
+  for (const L of layers) {
+    const n = 65, pts = new Array(n).fill(0);
+    let h = [0, 0];
+    // midpoint displacement on 2^6+1 points
+    pts[0] = vrng(); pts[n - 1] = vrng();
+    (function md(a, b, r) {
+      if (b - a < 2) return;
+      const m = (a + b) >> 1;
+      pts[m] = (pts[a] + pts[b]) / 2 + (vrng() - 0.5) * r;
+      md(a, m, r * L.rough); md(m, b, r * L.rough);
+    })(0, n - 1, 1.4);
+    const ys = pts.map((p, i) => L.base - p * L.amp);
+    ridges.push({ ys, L });
+  }
+  vseed = save;
+}
+function drawMountains(w, tint) {
+  for (const { ys, L } of ridges) {
+    const n = ys.length;
+    ctx.beginPath(); ctx.moveTo(0, H);
+    for (let i = 0; i < n; i++) ctx.lineTo(i / (n - 1) * w, ys[i]);
+    ctx.lineTo(w, H); ctx.closePath();
+    const top = Math.min(...ys);
+    const gr = ctx.createLinearGradient(0, top, 0, L.base + 80);
+    gr.addColorStop(0, `rgba(29,26,23,${L.alpha})`);
+    gr.addColorStop(0.55, `rgba(29,26,23,${L.alpha * 0.45})`);
+    gr.addColorStop(1, `rgba(239,230,210,0)`);
+    ctx.fillStyle = gr; ctx.fill();
+    // a dry-brush ridge line
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { const x = i / (n - 1) * w; i ? ctx.lineTo(x, ys[i]) : ctx.moveTo(x, ys[i]); }
+    ctx.strokeStyle = `rgba(29,26,23,${L.alpha * 1.3})`; ctx.lineWidth = 2; ctx.stroke();
+    // mist band
+    const mg = ctx.createLinearGradient(0, L.base - 10, 0, L.base + 60);
+    mg.addColorStop(0, 'rgba(239,230,210,0)'); mg.addColorStop(0.5, `rgba(239,230,210,${L.mist})`); mg.addColorStop(1, 'rgba(239,230,210,0)');
+    ctx.fillStyle = mg; ctx.fillRect(0, L.base - 10, w, 70);
+  }
+  if (tint) { ctx.fillStyle = tint; ctx.globalAlpha = 0.07; ctx.fillRect(0, 0, w, H); ctx.globalAlpha = 1; }
+}
+function drawSun(x, y, r) {
+  const g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r);
+  g.addColorStop(0, 'rgba(184,50,42,0.75)'); g.addColorStop(1, 'rgba(184,50,42,0.35)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+}
+function drawCloud(x, y, s, a) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.strokeStyle = `rgba(29,26,23,${0.5 * a})`; ctx.lineWidth = 2; ctx.fillStyle = `rgba(250,246,236,${0.85 * a})`;
+  ctx.beginPath();
+  ctx.moveTo(-60, 10);
+  ctx.bezierCurveTo(-70, -10, -40, -22, -28, -8);
+  ctx.bezierCurveTo(-24, -32, 10, -34, 14, -10);
+  ctx.bezierCurveTo(26, -26, 58, -18, 50, 2);
+  ctx.bezierCurveTo(70, 4, 66, 18, 50, 16);
+  ctx.lineTo(-60, 16); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // the curl inside
+  ctx.beginPath(); ctx.arc(-6, -4, 8, Math.PI, Math.PI * 2.4); ctx.stroke();
+  ctx.restore();
+}
+function drawGround(w) {
+  // foreground rock shelf in heavy ink
+  ctx.beginPath(); ctx.moveTo(0, 560);
+  ctx.bezierCurveTo(120, 540, 200, 575, 300, 556); ctx.bezierCurveTo(420, 532, 520, 566, 620, 552);
+  ctx.bezierCurveTo(690, 544, 730, 560, w, 552); ctx.lineTo(w, H); ctx.lineTo(0, H); ctx.closePath();
+  const g = ctx.createLinearGradient(0, 540, 0, H);
+  g.addColorStop(0, 'rgba(70,62,52,0.35)'); g.addColorStop(1, 'rgba(40,34,28,0.12)');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'rgba(29,26,23,0.55)'; ctx.lineWidth = 3; ctx.stroke();
+  // cliff on the left
+  ctx.beginPath(); ctx.moveTo(0, 360); ctx.bezierCurveTo(60, 350, 130, 380, 150, 430);
+  ctx.bezierCurveTo(165, 480, 120, 520, 140, 560); ctx.lineTo(0, 560); ctx.closePath();
+  const c = ctx.createLinearGradient(0, 360, 140, 560);
+  c.addColorStop(0, 'rgba(29,26,23,0.55)'); c.addColorStop(1, 'rgba(29,26,23,0.12)');
+  ctx.fillStyle = c; ctx.fill();
+  ctx.strokeStyle = 'rgba(29,26,23,0.7)'; ctx.lineWidth = 2.5; ctx.stroke();
+  // texture strokes (cun)
+  ctx.strokeStyle = 'rgba(29,26,23,0.35)'; ctx.lineWidth = 1.5;
+  for (let i = 0; i < 9; i++) { ctx.beginPath(); ctx.moveTo(20 + i * 12, 380 + i * 18); ctx.quadraticCurveTo(50 + i * 10, 395 + i * 18, 70 + i * 9, 420 + i * 17); ctx.stroke(); }
+  // a pine leaning off the cliff
+  drawPine(60, 372, 1);
+}
+function drawPine(x, y, s) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.strokeStyle = INK; ctx.lineCap = 'round';
+  ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(0, 0); ctx.bezierCurveTo(10, -40, 40, -60, 90, -80); ctx.stroke();
+  ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(40, -55); ctx.quadraticCurveTo(70, -50, 100, -40); ctx.stroke();
+  const tufts = [[90, -84], [110, -78], [70, -74], [104, -44], [124, -40], [50, -68]];
+  for (const [tx, ty] of tufts) {
+    ctx.fillStyle = 'rgba(29,26,23,0.78)';
+    ctx.beginPath(); ctx.ellipse(tx, ty, 24, 8, -0.1, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(29,26,23,0.9)'; ctx.lineWidth = 1;
+    for (let k = -3; k <= 3; k++) { ctx.beginPath(); ctx.moveTo(tx + k * 6, ty - 6); ctx.lineTo(tx + k * 7, ty + 6); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+
+// ---- Figures ---------------------------------------------------------------------------
+function inkStroke(w = 2.5, c = INK) { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; }
+
+function drawCultivator(x, y, s, t, realm, tamma) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  const breathe = Math.sin(t * 1.6) * 1.5;
+  // the rock seat
+  ctx.beginPath(); ctx.moveTo(-90, 20); ctx.bezierCurveTo(-96, -4, -70, -14, -40, -10);
+  ctx.bezierCurveTo(-10, -18, 40, -16, 70, -8); ctx.bezierCurveTo(96, -2, 100, 18, 86, 30);
+  ctx.lineTo(-84, 32); ctx.closePath();
+  const rg = ctx.createLinearGradient(0, -16, 0, 32);
+  rg.addColorStop(0, 'rgba(60,54,46,0.85)'); rg.addColorStop(1, 'rgba(60,54,46,0.35)');
+  ctx.fillStyle = rg; ctx.fill(); inkStroke(3); ctx.stroke();
+  inkStroke(1.5, 'rgba(240,230,210,0.5)');
+  ctx.beginPath(); ctx.moveTo(-60, 0); ctx.quadraticCurveTo(-40, 10, -20, 6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(30, -2); ctx.quadraticCurveTo(50, 8, 70, 4); ctx.stroke();
+  // crossed legs: a broad lens of robe
+  ctx.beginPath(); ctx.moveTo(-66, -12); ctx.bezierCurveTo(-60, -40, 60, -40, 66, -12);
+  ctx.bezierCurveTo(40, 2, -40, 2, -66, -12); ctx.closePath();
+  ctx.fillStyle = '#f6f1e6'; ctx.fill(); inkStroke(2.5); ctx.stroke();
+  inkStroke(1.5); ctx.beginPath(); ctx.moveTo(-30, -22); ctx.quadraticCurveTo(0, -10, 34, -24); ctx.stroke();
+  // torso and robe
+  ctx.beginPath(); ctx.moveTo(-26, -92 + breathe); ctx.bezierCurveTo(-44, -70, -52, -44, -56, -24);
+  ctx.lineTo(56, -24); ctx.bezierCurveTo(52, -44, 44, -70, 26, -92 + breathe); ctx.closePath();
+  ctx.fillStyle = '#f9f5ec'; ctx.fill(); inkStroke(2.5); ctx.stroke();
+  // outer robe band (dark ink)
+  ctx.beginPath(); ctx.moveTo(-26, -92 + breathe); ctx.bezierCurveTo(-40, -70, -46, -44, -50, -26);
+  ctx.lineTo(-38, -26); ctx.bezierCurveTo(-34, -50, -26, -72, -14, -90 + breathe); ctx.closePath();
+  ctx.fillStyle = 'rgba(29,26,23,0.8)'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(26, -92 + breathe); ctx.bezierCurveTo(40, -70, 46, -44, 50, -26);
+  ctx.lineTo(38, -26); ctx.bezierCurveTo(34, -50, 26, -72, 14, -90 + breathe); ctx.closePath(); ctx.fill();
+  // collar V
+  inkStroke(2); ctx.beginPath(); ctx.moveTo(-14, -90 + breathe); ctx.lineTo(4, -62); ctx.lineTo(14, -90 + breathe); ctx.stroke();
+  // sash
+  ctx.fillStyle = CINNABAR; ctx.fillRect(-30, -50, 60, 7);
+  const sway = Math.sin(t * 1.3) * 6;
+  inkStroke(3, CINNABAR); ctx.beginPath(); ctx.moveTo(8, -44); ctx.bezierCurveTo(20, -30, 30 + sway, -20, 44 + sway, -6); ctx.stroke();
+  // sleeves meeting at the hands in the lap
+  ctx.beginPath(); ctx.moveTo(-40, -76); ctx.bezierCurveTo(-62, -50, -40, -28, -6, -30);
+  ctx.lineTo(-6, -40); ctx.bezierCurveTo(-30, -42, -36, -56, -30, -70); ctx.closePath();
+  ctx.fillStyle = '#f9f5ec'; ctx.fill(); inkStroke(2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(40, -76); ctx.bezierCurveTo(62, -50, 40, -28, 6, -30);
+  ctx.lineTo(6, -40); ctx.bezierCurveTo(30, -42, 36, -56, 30, -70); ctx.closePath();
+  ctx.fillStyle = '#f9f5ec'; ctx.fill(); inkStroke(2); ctx.stroke();
+  // hands (mudra)
+  ctx.beginPath(); ctx.ellipse(0, -35, 10, 6, 0, 0, 7); ctx.fillStyle = '#efdcc0'; ctx.fill(); inkStroke(1.5); ctx.stroke();
+  // neck and head
+  ctx.fillStyle = '#efdcc0';
+  ctx.fillRect(-6, -102 + breathe, 12, 12);
+  ctx.beginPath(); ctx.moveTo(0, -136 + breathe);
+  ctx.bezierCurveTo(16, -136 + breathe, 17, -116 + breathe, 12, -106 + breathe);
+  ctx.quadraticCurveTo(0, -96 + breathe, -12, -106 + breathe);
+  ctx.bezierCurveTo(-17, -116 + breathe, -16, -136 + breathe, 0, -136 + breathe);
+  ctx.fill(); inkStroke(2); ctx.stroke();
+  // closed eyes and a calm mouth
+  inkStroke(1.5); ctx.beginPath(); ctx.arc(-6, -118 + breathe, 3.5, 0.2, Math.PI - 0.2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(6, -118 + breathe, 3.5, 0.2, Math.PI - 0.2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-3, -108 + breathe); ctx.lineTo(3, -108 + breathe); ctx.stroke();
+  // hair: swept back with a topknot and a hairpin
+  ctx.fillStyle = INK;
+  ctx.beginPath(); ctx.moveTo(-16, -120 + breathe); ctx.bezierCurveTo(-18, -142 + breathe, 18, -142 + breathe, 16, -120 + breathe);
+  ctx.bezierCurveTo(10, -132 + breathe, -10, -132 + breathe, -16, -120 + breathe); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(0, -146 + breathe, 9, 7, 0, 0, 7); ctx.fill();
+  inkStroke(2.5, CINNABAR); ctx.beginPath(); ctx.moveTo(-16, -150 + breathe); ctx.lineTo(16, -143 + breathe); ctx.stroke();
+  // hair ribbons trailing
+  inkStroke(2, INK); ctx.beginPath(); ctx.moveTo(-6, -142 + breathe);
+  ctx.bezierCurveTo(-26, -136 + breathe, -30 - sway, -112, -40 - sway, -96); ctx.stroke();
+  ctx.restore();
+}
+function drawAura(x, y, s, t, realm, power) {
+  const c = AURA[realm];
+  ctx.save(); ctx.translate(x, y);
+  const r = (110 + realm * 14) * s * (1 + Math.sin(t * 2) * 0.03);
+  const g = ctx.createRadialGradient(0, -70 * s, 10, 0, -70 * s, r);
+  g.addColorStop(0, hexA(c, 0.55)); g.addColorStop(0.6, hexA(c, 0.18)); g.addColorStop(1, hexA(c, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, -70 * s, r, 0, 7); ctx.fill();
+  // halo ring behind the head, brush-like
+  ctx.strokeStyle = hexA(c, 0.8); ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(0, -118 * s, 34 * s, -Math.PI * 0.95 + t * 0.2, Math.PI * 0.75 + t * 0.2); ctx.stroke();
+  // rising ribbons of qi, more with more power
+  const n = Math.min(8, 2 + Math.floor(power));
+  for (let k = 0; k < n; k++) {
+    const ph = (t * 0.4 + k / n) % 1;
+    const xx = Math.sin(k * 2.1 + t) * 70 * s, yy = (-10 - ph * 220) * s;
+    ctx.strokeStyle = hexA(c, 0.5 * (1 - ph)); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(xx, yy); ctx.bezierCurveTo(xx + 12, yy - 14, xx - 12, yy - 26, xx + 4, yy - 40); ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawTamMa(x, y, s, t, k) { // a dark wisp with hollow eyes
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  const w = Math.sin(t * 3 + k) * 6;
+  ctx.beginPath(); ctx.moveTo(0, -34);
+  ctx.bezierCurveTo(22, -34, 26, -6, 18, 10);
+  ctx.bezierCurveTo(14, 22, 26 + w, 34, 8 + w, 46);
+  ctx.bezierCurveTo(4, 34, -4, 30, -10, 40 - w);
+  ctx.bezierCurveTo(-14, 26, -26, 16, -20, 0);
+  ctx.bezierCurveTo(-26, -20, -18, -34, 0, -34); ctx.closePath();
+  const g = ctx.createLinearGradient(0, -34, 0, 46);
+  g.addColorStop(0, 'rgba(25,12,20,0.85)'); g.addColorStop(1, 'rgba(25,12,20,0)');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.fillStyle = '#c8483c';
+  ctx.beginPath(); ctx.ellipse(-7, -14, 4, 2.5, 0.3, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(7, -14, 4, 2.5, -0.3, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function drawScroll(x, y, s) { // a scroll unrolled on a low table
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // table
+  inkStroke(3); ctx.fillStyle = 'rgba(90,60,40,0.75)';
+  ctx.beginPath(); ctx.moveTo(-44, -10); ctx.lineTo(44, -10); ctx.lineTo(40, -2); ctx.lineTo(-40, -2); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-34, -2); ctx.quadraticCurveTo(-38, 8, -32, 14); ctx.moveTo(34, -2); ctx.quadraticCurveTo(38, 8, 32, 14); ctx.stroke();
+  // paper
+  ctx.fillStyle = '#fbf6ea';
+  ctx.beginPath(); ctx.moveTo(-34, -14); ctx.lineTo(34, -14); ctx.lineTo(30, -40); ctx.lineTo(-30, -40); ctx.closePath(); ctx.fill();
+  inkStroke(1.5); ctx.stroke();
+  // rods
+  inkStroke(5); ctx.beginPath(); ctx.moveTo(-38, -14); ctx.lineTo(-30, -42); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(38, -14); ctx.lineTo(30, -42); ctx.stroke();
+  // writing
+  inkStroke(1.2);
+  for (let k = 0; k < 6; k++) { const xx = -20 + k * 8; ctx.beginPath(); ctx.moveTo(xx, -36); ctx.lineTo(xx + 1, -18); ctx.stroke(); }
+  ctx.fillStyle = CINNABAR; ctx.fillRect(18, -24, 6, 6);
+  ctx.restore();
+}
+function drawHerb(x, y, s) { // spirit herbs with red berries
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  const stems = [[-22, -56, -0.25], [0, -70, 0], [20, -52, 0.3], [-8, -44, -0.1]];
+  for (const [sx, h, lean] of stems) {
+    inkStroke(2); ctx.beginPath(); ctx.moveTo(sx, 0); ctx.quadraticCurveTo(sx + lean * 30, h / 2, sx + lean * 40, h); ctx.stroke();
+    for (let k = 1; k <= 3; k++) {
+      const yy = h * k / 4, xx = sx + lean * 40 * k / 4;
+      ctx.fillStyle = 'rgba(70,96,62,0.85)';
+      ctx.beginPath(); ctx.ellipse(xx - 9, yy, 10, 3.5, 0.5, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(xx + 9, yy, 10, 3.5, -0.5, 0, 7); ctx.fill();
+    }
+    ctx.fillStyle = CINNABAR;
+    ctx.beginPath(); ctx.arc(sx + lean * 40, h - 3, 4, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + lean * 40 + 5, h + 3, 3, 0, 7); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(60,50,40,0.5)'; ctx.beginPath(); ctx.ellipse(0, 2, 36, 6, 0, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function drawLotus(x, y, s) { // a lotus pond
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = 'rgba(90,120,130,0.25)'; ctx.beginPath(); ctx.ellipse(0, 0, 90, 18, 0, 0, 7); ctx.fill();
+  inkStroke(1.5, 'rgba(29,26,23,0.5)'); ctx.beginPath(); ctx.ellipse(0, 0, 90, 18, 0, 0, 7); ctx.stroke();
+  for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(-60 + k * 40, 4 + k * 3); ctx.lineTo(-30 + k * 40, 4 + k * 3); ctx.stroke(); }
+  // leaves
+  for (const [lx, ly, r] of [[-52, -2, 20], [40, 2, 24], [64, -4, 14]]) {
+    ctx.fillStyle = 'rgba(62,90,70,0.85)'; ctx.beginPath(); ctx.ellipse(lx, ly, r, r * 0.35, 0, 0.2, Math.PI * 2 - 0.2); ctx.lineTo(lx, ly); ctx.fill();
+  }
+  // stem and flower
+  inkStroke(2.5); ctx.beginPath(); ctx.moveTo(-4, 0); ctx.quadraticCurveTo(-10, -20, 0, -40); ctx.stroke();
+  const petals = [[-0.9, 16], [-0.45, 20], [0, 22], [0.45, 20], [0.9, 16]];
+  for (const [a, l] of petals) {
+    ctx.save(); ctx.translate(0, -40); ctx.rotate(a);
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.bezierCurveTo(-8, -l * 0.5, -4, -l, 0, -l); ctx.bezierCurveTo(4, -l, 8, -l * 0.5, 0, 0);
+    ctx.fillStyle = '#e6a6a0'; ctx.fill(); inkStroke(1.2); ctx.stroke(); ctx.restore();
+  }
+  ctx.fillStyle = '#d9b45a'; ctx.beginPath(); ctx.ellipse(0, -44, 5, 3, 0, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function drawFurnace(x, y, s, t = 0) { // three-legged alchemy cauldron with smoke
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  inkStroke(4); ctx.beginPath(); ctx.moveTo(-22, -10); ctx.lineTo(-28, 6); ctx.moveTo(22, -10); ctx.lineTo(28, 6); ctx.moveTo(0, -8); ctx.lineTo(0, 6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-34, -50); ctx.bezierCurveTo(-42, -20, -28, -6, 0, -6); ctx.bezierCurveTo(28, -6, 42, -20, 34, -50); ctx.closePath();
+  const g = ctx.createLinearGradient(-34, 0, 34, 0);
+  g.addColorStop(0, '#3c3a36'); g.addColorStop(0.5, '#6d6458'); g.addColorStop(1, '#2c2a26');
+  ctx.fillStyle = g; ctx.fill(); inkStroke(2.5); ctx.stroke();
+  // band of patterns
+  inkStroke(1.2, 'rgba(240,230,210,0.6)'); ctx.beginPath(); ctx.moveTo(-34, -38); ctx.lineTo(34, -38); ctx.stroke();
+  for (let k = -3; k <= 3; k++) { ctx.beginPath(); ctx.arc(k * 9, -32, 3, 0, Math.PI); ctx.stroke(); }
+  // ears
+  inkStroke(4); ctx.beginPath(); ctx.moveTo(-26, -50); ctx.lineTo(-26, -62); ctx.lineTo(-16, -62); ctx.moveTo(26, -50); ctx.lineTo(26, -62); ctx.lineTo(16, -62); ctx.stroke();
+  // lid and knob
+  ctx.fillStyle = '#2c2a26'; ctx.beginPath(); ctx.ellipse(0, -52, 32, 6, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-14, -54); ctx.quadraticCurveTo(0, -70, 14, -54); ctx.fill();
+  ctx.fillStyle = CINNABAR; ctx.beginPath(); ctx.arc(0, -68, 4, 0, 7); ctx.fill();
+  // fire glow below
+  ctx.fillStyle = 'rgba(220,110,50,0.5)'; ctx.beginPath(); ctx.ellipse(0, 4, 20, 4, 0, 0, 7); ctx.fill();
+  // smoke
+  for (let k = 0; k < 3; k++) {
+    const ph = (t * 0.3 + k / 3) % 1;
+    inkStroke(2, `rgba(29,26,23,${0.4 * (1 - ph)})`);
+    const yy = -74 - ph * 70;
+    ctx.beginPath(); ctx.moveTo(0, yy + 10); ctx.bezierCurveTo(12, yy, -12, yy - 10, 4, yy - 22); ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawCrystal(x, y, s) { // spirit vein: crystals jutting from a rock
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = 'rgba(50,45,40,0.85)';
+  ctx.beginPath(); ctx.moveTo(-34, 6); ctx.bezierCurveTo(-40, -10, -20, -20, 0, -16); ctx.bezierCurveTo(20, -24, 40, -8, 34, 6); ctx.closePath(); ctx.fill();
+  inkStroke(2); ctx.stroke();
+  const cr = [[-14, -16, 10, 40, -0.35], [2, -18, 12, 56, 0.05], [18, -14, 9, 34, 0.4], [-26, -6, 6, 20, -0.7]];
+  for (const [cx, cy, w, h, a] of cr) {
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(a);
+    ctx.beginPath(); ctx.moveTo(-w / 2, 0); ctx.lineTo(-w / 2, -h * 0.75); ctx.lineTo(0, -h); ctx.lineTo(w / 2, -h * 0.75); ctx.lineTo(w / 2, 0); ctx.closePath();
+    const g = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+    g.addColorStop(0, 'rgba(110,190,190,0.9)'); g.addColorStop(1, 'rgba(60,120,140,0.9)');
+    ctx.fillStyle = g; ctx.fill(); inkStroke(1.5); ctx.stroke();
+    inkStroke(1, 'rgba(255,255,255,0.7)'); ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(0, -h * 0.85); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+function drawArray(x, y, s, t = 0, c = AURA[1]) { // a ring of trigram marks on the ground
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.strokeStyle = hexA(c, 0.8); ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.ellipse(0, 0, 120, 26, 0, 0, 7); ctx.stroke();
+  ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(0, 0, 100, 21, 0, 0, 7); ctx.stroke();
+  for (let k = 0; k < 8; k++) {
+    const a = k / 8 * Math.PI * 2 + t * 0.3;
+    const px = Math.cos(a) * 110, py = Math.sin(a) * 23.5;
+    ctx.save(); ctx.translate(px, py); ctx.scale(1, 0.5);
+    for (let l = 0; l < 3; l++) {
+      const broken = (k >> l) & 1;
+      ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+      if (broken) { ctx.beginPath(); ctx.moveTo(-8, l * 6 - 6); ctx.lineTo(-2, l * 6 - 6); ctx.moveTo(2, l * 6 - 6); ctx.lineTo(8, l * 6 - 6); ctx.stroke(); }
+      else { ctx.beginPath(); ctx.moveTo(-8, l * 6 - 6); ctx.lineTo(8, l * 6 - 6); ctx.stroke(); }
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+function drawSword(x, y, s, a = 0) { // a flying sword, pointing along angle a
+  ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.scale(s, s);
+  // trail
+  const g = ctx.createLinearGradient(-90, 0, -20, 0);
+  g.addColorStop(0, 'rgba(91,132,196,0)'); g.addColorStop(1, 'rgba(91,132,196,0.45)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(-90, 0); ctx.lineTo(-20, -5); ctx.lineTo(-20, 5); ctx.closePath(); ctx.fill();
+  // blade
+  ctx.beginPath(); ctx.moveTo(-14, -3.5); ctx.lineTo(40, -3.5); ctx.lineTo(50, 0); ctx.lineTo(40, 3.5); ctx.lineTo(-14, 3.5); ctx.closePath();
+  ctx.fillStyle = '#dfe4e6'; ctx.fill(); inkStroke(1.5); ctx.stroke();
+  inkStroke(1, 'rgba(29,26,23,0.5)'); ctx.beginPath(); ctx.moveTo(-12, 0); ctx.lineTo(42, 0); ctx.stroke();
+  // guard
+  ctx.fillStyle = INK; ctx.beginPath(); ctx.moveTo(-14, -9); ctx.lineTo(-10, 0); ctx.lineTo(-14, 9); ctx.lineTo(-18, 0); ctx.closePath(); ctx.fill();
+  // hilt and tassel
+  inkStroke(4); ctx.beginPath(); ctx.moveTo(-18, 0); ctx.lineTo(-34, 0); ctx.stroke();
+  inkStroke(2, CINNABAR); ctx.beginPath(); ctx.moveTo(-34, 0); ctx.quadraticCurveTo(-42, 8, -48, 14); ctx.moveTo(-34, 0); ctx.quadraticCurveTo(-44, 4, -50, 8); ctx.stroke();
+  ctx.restore();
+}
+function drawCrane(x, y, s, t = 0) { // a red-crowned crane in flight
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  const flap = Math.sin(t * 3) * 0.6;
+  // far wing
+  ctx.save(); ctx.rotate(-0.2 - flap * 0.5);
+  ctx.beginPath(); ctx.moveTo(-4, -4); ctx.bezierCurveTo(-10, -40, 10, -60, 30, -64); ctx.bezierCurveTo(20, -40, 18, -20, 10, -4); ctx.closePath();
+  ctx.fillStyle = '#ece6da'; ctx.fill(); inkStroke(1.5); ctx.stroke();
+  ctx.fillStyle = INK; ctx.beginPath(); ctx.moveTo(18, -52); ctx.bezierCurveTo(24, -58, 28, -62, 30, -64); ctx.bezierCurveTo(24, -50, 22, -40, 20, -34); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  // body
+  ctx.beginPath(); ctx.ellipse(0, 0, 28, 10, -0.1, 0, 7); ctx.fillStyle = '#fbf8f1'; ctx.fill(); inkStroke(1.8); ctx.stroke();
+  // tail
+  ctx.fillStyle = INK; ctx.beginPath(); ctx.moveTo(-24, -2); ctx.lineTo(-40, -6); ctx.lineTo(-38, 4); ctx.closePath(); ctx.fill();
+  // legs trailing
+  inkStroke(1.5); ctx.beginPath(); ctx.moveTo(-18, 6); ctx.lineTo(-56, 12); ctx.moveTo(-16, 8); ctx.lineTo(-54, 16); ctx.stroke();
+  // neck and head
+  inkStroke(4); ctx.beginPath(); ctx.moveTo(24, -4); ctx.quadraticCurveTo(40, -10, 54, -8); ctx.stroke();
+  ctx.fillStyle = '#fbf8f1'; ctx.beginPath(); ctx.ellipse(57, -8, 6, 4, 0, 0, 7); ctx.fill(); inkStroke(1.2); ctx.stroke();
+  ctx.fillStyle = CINNABAR; ctx.beginPath(); ctx.ellipse(57, -12, 3, 2, 0, 0, 7); ctx.fill();
+  inkStroke(2, '#7a6a50'); ctx.beginPath(); ctx.moveTo(62, -8); ctx.lineTo(76, -6); ctx.stroke();
+  // near wing
+  ctx.save(); ctx.rotate(0.15 + flap);
+  ctx.beginPath(); ctx.moveTo(-6, 0); ctx.bezierCurveTo(-12, -40, 8, -66, 34, -72); ctx.bezierCurveTo(22, -44, 20, -22, 12, 0); ctx.closePath();
+  ctx.fillStyle = '#fbf8f1'; ctx.fill(); inkStroke(1.8); ctx.stroke();
+  ctx.fillStyle = INK; ctx.beginPath(); ctx.moveTo(20, -58); ctx.bezierCurveTo(28, -66, 32, -70, 34, -72); ctx.bezierCurveTo(26, -56, 24, -44, 22, -38); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function drawSeal(x, y, w, h, lines, size) { // a cinnabar seal with text, vertical
+  ctx.save();
+  ctx.fillStyle = CINNABAR; ctx.globalAlpha = 0.92;
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, 4) : ctx.rect(x, y, w, h); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = '#f6ead6'; ctx.lineWidth = 2; ctx.strokeRect(x + 4, y + 4, w - 8, h - 8);
+  lines.forEach((l, i) => text(l, x + w / 2, y + 22 + i * (size + 8), size, '#fbf1e0', 'center', 'bold'));
+  ctx.restore();
+}
+function countTag(x, y, n) {
+  if (n <= 1) return;
+  const s = '×' + n;
+  ctx.font = `bold 14px ${FONT}`;
+  const w = ctx.measureText(s).width + 12;
+  ctx.fillStyle = 'rgba(184,50,42,0.9)'; ctx.fillRect(x - w / 2, y - 10, w, 20);
+  text(s, x, y + 1, 14, '#fbf1e0', 'center', 'bold');
+}
+// A brush-style button: paper face, ink border, optional cinnabar fill.
+function button(r, label, sub, opts = {}) {
+  const hover = inRect(pointer, r) && opts.enabled !== false;
+  ctx.save();
+  ctx.fillStyle = opts.enabled === false ? 'rgba(120,110,95,0.35)' : (opts.fill || '#f8f2e4');
+  if (hover) ctx.globalAlpha = 0.9;
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = INK; ctx.lineWidth = 2.5; ctx.strokeRect(r.x, r.y, r.w, r.h);
+  ctx.lineWidth = 1; ctx.strokeRect(r.x + 4, r.y + 4, r.w - 8, r.h - 8);
+  const fc = opts.textColor || INK;
+  if (sub) {
+    text(label, r.x + r.w / 2, r.y + r.h / 2 - 9, opts.size || 20, fc, 'center', 'bold');
+    text(sub, r.x + r.w / 2, r.y + r.h / 2 + 13, 14, fc);
+  } else text(label, r.x + r.w / 2, r.y + r.h / 2 + 1, opts.size || 20, fc, 'center', 'bold');
+  ctx.restore();
+}
+
+function drawPainting(t, withUI) {
+  const s = state, PW = 766;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, PW, H); ctx.clip();
+  if (s.shake > 0) ctx.translate((vrng() - 0.5) * 14 * s.shake, (vrng() - 0.5) * 10 * s.shake);
+  ctx.drawImage(paperCanvas, 0, 0);
+  drawSun(560, 110, 46);
+  drawMountains(PW, AURA[s.realm]);
+  drawCloud(140 + Math.sin(t * 0.1) * 20, 130, 1, 1);
+  drawCloud(640 + Math.sin(t * 0.08 + 2) * 24, 250, 0.7, 0.8);
+  // crane in the sky
+  if (s.owned[7]) {
+    const cx = (SPOT[7].x + t * 30) % (PW + 200) - 100;
+    drawCrane(cx, SPOT[7].y + Math.sin(t * 0.7) * 16, 0.9, t);
+    if (s.owned[7] > 4) drawCrane((cx + 300) % (PW + 200) - 100, SPOT[7].y + 70 + Math.sin(t * 0.8) * 12, 0.6, t + 1);
+    countTag(Math.max(40, Math.min(PW - 40, cx)), SPOT[7].y + 50, s.owned[7]);
+  }
+  drawGround(PW);
+  if (s.owned[4]) { drawCrystal(SPOT[4].x, SPOT[4].y, 1); countTag(SPOT[4].x, SPOT[4].y + 22, s.owned[4]); }
+  if (s.owned[5]) drawArray(SPOT[5].x, SPOT[5].y, 1, t, AURA[Math.max(1, s.realm)]);
+  drawAura(HERO.x, HERO.y, 1, t, s.realm, Math.log10(1 + production()));
+  drawCultivator(HERO.x, HERO.y, 1, t, s.realm, s.tamma);
+  if (s.tamma > 0) for (let k = 0; k < 3; k++) {
+    const a = t * 0.9 + k * 2.1;
+    drawTamMa(HERO.x + Math.cos(a) * 110, HERO.y - 80 + Math.sin(a) * 50, 0.9, t, k);
+  }
+  if (s.owned[5]) countTag(SPOT[5].x + 130, SPOT[5].y, s.owned[5]);
+  if (s.owned[6]) {
+    const n = Math.min(3, s.owned[6]);
+    for (let k = 0; k < n; k++) {
+      const a = t * 1.2 + k * Math.PI * 2 / n;
+      const px = SPOT[6].x + Math.cos(a) * 150, py = SPOT[6].y + Math.sin(a) * 40;
+      drawSword(px, py, 0.9, a + Math.PI / 2);
+    }
+    countTag(SPOT[6].x + 170, SPOT[6].y - 40, s.owned[6]);
+  }
+  if (s.owned[0]) { drawScroll(SPOT[0].x, SPOT[0].y, 1); countTag(SPOT[0].x, SPOT[0].y + 26, s.owned[0]); }
+  if (s.owned[1]) { drawHerb(SPOT[1].x, SPOT[1].y, 1); if (s.owned[1] >= 10) drawHerb(SPOT[1].x + 44, SPOT[1].y + 6, 0.7); countTag(SPOT[1].x, SPOT[1].y + 20, s.owned[1]); }
+  if (s.owned[2]) { drawLotus(SPOT[2].x, SPOT[2].y, 1); countTag(SPOT[2].x + 70, SPOT[2].y - 24, s.owned[2]); }
+  if (s.owned[3]) { drawFurnace(SPOT[3].x, SPOT[3].y, 1, t); countTag(SPOT[3].x, SPOT[3].y + 22, s.owned[3]); }
+  // qi wisps flowing into the cultivator
+  for (const p of s.parts) {
+    const k = p.t / p.dur, e = k * k;
+    const px = p.sx + (HERO.x - p.sx) * e + Math.sin(p.wob + p.t * 3) * 10 * (1 - k);
+    const py = p.sy + (HERO.y - 80 - p.sy) * e;
+    ctx.strokeStyle = hexA(AURA[Math.max(1, s.realm)], 0.7 * (1 - k * 0.6)); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px - 6, py + 3); ctx.quadraticCurveTo(px, py - 6, px + 6, py + 2); ctx.stroke();
+  }
+  // effects
+  for (const f of s.fx) {
+    const k = f.t / f.dur;
+    if (f.type === 'ring') {
+      ctx.strokeStyle = hexA(f.c.startsWith('#') ? f.c : '#4a443d', 0.8 * (1 - k)); ctx.lineWidth = 4 * (1 - k) + 1;
+      ctx.beginPath(); ctx.ellipse(f.x, f.y, f.r * k + 10, (f.r * k + 10) * 0.6, 0, 0, 7); ctx.stroke();
+    } else if (f.type === 'bolt') {
+      const save = vseed; vseed = f.seed;
+      ctx.strokeStyle = f.dark ? `rgba(60,20,30,${1 - k})` : `rgba(120,140,230,${1 - k})`;
+      ctx.lineWidth = 4; ctx.beginPath();
+      let bx = HERO.x + (vrng() - 0.5) * 200, by = 0; ctx.moveTo(bx, by);
+      while (by < HERO.y - 140) { bx += (vrng() - 0.5) * 60; by += 30 + vrng() * 30; ctx.lineTo(bx, Math.min(by, HERO.y - 140)); }
+      ctx.stroke(); ctx.lineWidth = 1.5; ctx.strokeStyle = `rgba(255,255,255,${1 - k})`; ctx.stroke();
+      vseed = save;
+    }
+  }
+  for (const f of s.floats) {
+    const a = 1 - f.t / 1.4;
+    ctx.globalAlpha = a; text(f.str, f.x, f.y, f.big ? 24 : 20, f.c, 'center', 'bold'); ctx.globalAlpha = 1;
+  }
+  // title seal
+  drawSeal(22, 22, 52, 150, ['Mặc', 'Tiên', 'Lộ'], 18);
+  // realm calligraphy at the top centre
+  text(REALMS[s.realm], 380, 46, 40, INK, 'center', 'bold');
+  if (s.lives > 0) text(`kiếp thứ ${s.lives + 1}`, 380, 82, 16, INK2);
+  if (s.tamma > 0) text(`Tâm ma: tu luyện chậm lại · còn ${Math.ceil(s.tamma)} giây`, 380, 108, 16, CINNABAR, 'center', 'bold');
+
+  if (withUI) {
+    button(BTN_MEDITATE, 'Thiền định', `+${fmt(clickGain())} linh khí · Space`, { fill: '#f8f2e4' });
+    if (s.realm >= tune.prestige_min_realm) {
+      const g = prestigeGain();
+      button(BTN_PRESTIGE, 'Chuyển thế', g >= 1 ? `+${g} Đạo tâm (+${Math.round(g * tune.daotam_bonus * 100)}%)` : 'chưa đủ linh khí',
+        { enabled: canPrestige(), fill: '#2b2724', textColor: '#f3e9d4', size: 18 });
+    }
+  }
+  // banners
+  if (s.banner) {
+    const b = s.banner, k = b.t / b.dur, a = k < 0.1 ? k / 0.1 : k > 0.8 ? (1 - k) / 0.2 : 1;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(248,242,228,0.92)'; ctx.fillRect(83, 196, 600, 84);
+    ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.strokeRect(83, 196, 600, 84);
+    text(b.str, 383, 226, 28, b.c, 'center', 'bold');
+    text(b.sub, 383, 258, 16, INK2);
+    ctx.globalAlpha = 1;
+  }
+  if (s.away) {
+    const a = Math.min(1, (7 - s.away.t) / 1);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(248,242,228,0.95)'; ctx.fillRect(113, 300, 540, 80);
+    ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.strokeRect(113, 300, 540, 80);
+    text(`Bế quan ${fmtTime(s.away.secs)}`, 383, 326, 24, INK, 'center', 'bold');
+    text(`Thu được ${fmt(s.away.gain)} linh khí và tu vi`, 383, 356, 16, INK2);
+    ctx.globalAlpha = 1;
+  }
+  if (s.flash) {
+    const k = s.flash.t / s.flash.dur;
+    ctx.globalAlpha = Math.max(0, 0.8 * (1 - k)); ctx.fillStyle = s.flash.c; ctx.fillRect(0, 0, PW, H); ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+  // painting edge: a mounting strip
+  ctx.fillStyle = '#5a4634'; ctx.fillRect(PW, 0, 6, H);
+}
+
+function drawPanel() {
+  const s = state, P = PANEL;
+  ctx.fillStyle = '#3b2e24'; ctx.fillRect(772, 0, W - 772, H);
+  ctx.fillStyle = PAPER2; ctx.fillRect(P.x, P.y, P.w, P.h);
+  ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.strokeRect(P.x + 6, P.y + 6, P.w - 12, P.h - 12);
+  const prod = production();
+  // linh khí
+  text('Linh khí', P.x + 24, P.y + 30, 16, INK2, 'left');
+  text(fmt(s.shownLK), P.x + 24, P.y + 62, 34, INK, 'left', 'bold');
+  text(`${fmt(prod)} / giây`, P.x + P.w - 24, P.y + 62, 18, s.tamma > 0 ? CINNABAR : INK2, 'right');
+  if (s.daotam > 0) text(`Đạo tâm ${s.daotam} · +${Math.round(s.daotam * tune.daotam_bonus * 100)}%`, P.x + P.w - 24, P.y + 30, 15, CINNABAR, 'right', 'bold');
+  // tu vi bar: 0..3 thresholds, the first third is "đủ"
+  const T = threshold();
+  const bx = P.x + 24, by = P.y + 112, bw = P.w - 48, bh = 22;
+  text('Tu vi', bx, P.y + 96, 16, INK2, 'left');
+  text(`${fmt(s.shownTV)} / ${fmt(T)}`, bx + bw, P.y + 96, 16, INK, 'right');
+  ctx.fillStyle = 'rgba(29,26,23,0.12)'; ctx.fillRect(bx, by, bw, bh);
+  const f1 = Math.min(1, s.shownTV / T);
+  const third = bw / 3;
+  ctx.fillStyle = hexA(AURA[Math.min(9, s.realm + 1)], 0.9); ctx.fillRect(bx, by, third * f1, bh);
+  if (s.shownTV > T) {
+    const f2 = Math.min(2, s.shownTV / T - 1);
+    ctx.fillStyle = 'rgba(214,168,67,0.9)'; ctx.fillRect(bx + third, by, third * f2, bh);
+  }
+  ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
+  ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(bx + third, by - 4); ctx.lineTo(bx + third, by + bh + 4); ctx.stroke();
+  text('đủ', bx + third, by + bh + 12, 14, INK2);
+  text('tích thêm → cơ hội cao hơn', bx + third * 2, by + bh + 12, 14, INK2);
+  // breakthrough
+  const next = s.realm + 1 >= REALMS.length ? ASCEND : REALMS[s.realm + 1];
+  const ok = canBreak();
+  const pct = Math.round(chance() * 100);
+  button(BTN_BREAK, ok ? `Đột phá → ${next} · ${pct}%` : `Đột phá → ${next}`,
+    ok ? (s.exp > 0 ? `Kinh nghiệm ${s.exp}: +${Math.round(s.exp * tune.exp_bonus * 100)}% · phím B` : 'thất bại mất tu vi và gặp tâm ma · phím B')
+      : `cần ${fmt(T - s.tuvi)} tu vi nữa · cơ hội lúc đủ ${Math.round(Math.min(Math.max(tune.chance_cap, baseChance()), baseChance() + tune.exp_bonus * s.exp) * 100)}%`,
+    { enabled: ok, fill: CINNABAR, textColor: ok ? '#fbf1e0' : INK, size: 20 });
+  // sources
+  text('Nguồn tu luyện', P.x + 24, ROW0 - 22, 18, INK, 'left', 'bold');
+  text('bấm để mua · phím 1–8', P.x + P.w - 24, ROW0 - 22, 14, INK2, 'right');
+  visibleRows().forEach(({ i, locked }, k) => {
+    const r = rowRect(k);
+    const cost = srcCost(i), afford = s.lk >= cost;
+    const hover = inRect(pointer, r) && !locked;
+    ctx.fillStyle = locked ? 'rgba(29,26,23,0.06)' : hover ? 'rgba(255,252,244,0.95)' : 'rgba(250,245,234,0.7)';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = afford && !locked ? INK : 'rgba(29,26,23,0.35)'; ctx.lineWidth = afford && !locked ? 2 : 1;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    // icon
+    ctx.save(); ctx.beginPath(); ctx.rect(r.x + 2, r.y + 2, 44, r.h - 4); ctx.clip();
+    ctx.globalAlpha = locked ? 0.3 : 1;
+    const icx = r.x + 24, icy = r.y + r.h - 6;
+    if (i === 0) drawScroll(icx, icy, 0.45);
+    else if (i === 1) drawHerb(icx, icy, 0.45);
+    else if (i === 2) drawLotus(icx, icy - 4, 0.3);
+    else if (i === 3) drawFurnace(icx, icy, 0.42);
+    else if (i === 4) drawCrystal(icx, icy - 2, 0.5);
+    else if (i === 5) drawArray(icx, icy - 14, 0.18, 0, AURA[4]);
+    else if (i === 6) drawSword(icx + 6, icy - 16, 0.4, -0.6);
+    else drawCrane(icx - 4, icy - 14, 0.3, 0.6);
+    ctx.restore(); ctx.globalAlpha = 1;
+    if (locked) {
+      text(SOURCES[i].name, r.x + 56, r.y + 13, 16, INK2, 'left', 'bold');
+      text(`mở khi đạt ${REALMS[SOURCES[i].unlock]}`, r.x + 56, r.y + 31, 14, INK2, 'left');
+      return;
+    }
+    text(`${i + 1}. ${SOURCES[i].name}`, r.x + 56, r.y + 13, 16, INK, 'left', 'bold');
+    text(`có ${s.owned[i]} · +${fmt(srcEach(i))}/giây mỗi cái`, r.x + 56, r.y + 31, 14, INK2, 'left');
+    text(fmt(cost), r.x + r.w - 10, r.y + 14, 17, afford ? CINNABAR : INK2, 'right', 'bold');
+    const nm = nextMilestone(s.owned[i]);
+    if (nm) {
+      const prev = MILESTONES[MILESTONES.indexOf(nm) - 1] || 0;
+      const f = (s.owned[i] - prev) / (nm - prev);
+      const mw = 90, mx = r.x + r.w - 10 - mw, my = r.y + 28;
+      ctx.fillStyle = 'rgba(29,26,23,0.12)'; ctx.fillRect(mx, my, mw, 8);
+      ctx.fillStyle = 'rgba(214,168,67,0.95)'; ctx.fillRect(mx, my, mw * f, 8);
+      ctx.strokeStyle = 'rgba(29,26,23,0.6)'; ctx.lineWidth = 1; ctx.strokeRect(mx, my, mw, 8);
+      text(`${nm}: ×${tune.milestone_mult}`, mx - 6, my + 5, 14, INK2, 'right');
+    }
+  });
+  // footer
+  text(`Đã tu ${fmtTime(s.totalTime)} · đột phá ${s.tries - s.fails}/${s.tries}`, P.x + P.w / 2, P.y + P.h - 20, 14, INK2);
+}
+
+// ---- Scenes ----------------------------------------------------------------------------
+const scenes = {
+  figures: {
+    update(dt) { state.t += dt; },
+    draw() {
+      ctx.drawImage(paperCanvas, 0, 0);
+      const t = state.t;
+      const items = [
+        ['Người tu', () => { drawAura(150, 300, 0.8, t, 3, 2); drawCultivator(150, 300, 0.8, t, 3, 0); }],
+        ['Tâm ma', () => drawTamMa(400, 240, 1.4, t, 0)],
+        ['Thổ Nạp Quyết', () => drawScroll(620, 270, 1.4)],
+        ['Linh Thảo Viên', () => drawHerb(860, 290, 1.4)],
+        ['Tụ Linh Liên', () => drawLotus(1100, 290, 1.1)],
+        ['Luyện Đan Lô', () => drawFurnace(150, 600, 1.3, t)],
+        ['Linh Mạch', () => drawCrystal(400, 600, 1.4)],
+        ['Tụ Linh Trận', () => drawArray(620, 590, 0.8, t, AURA[4])],
+        ['Ngự Phi Kiếm', () => drawSword(860, 560, 1.5, -0.3)],
+        ['Tiên Hạc', () => drawCrane(1090, 560, 1.2, t)],
+      ];
+      const pos = [[150, 340], [400, 340], [620, 340], [860, 340], [1100, 340], [150, 650], [400, 650], [620, 650], [860, 650], [1100, 650]];
+      items.forEach(([name, fn], k) => { fn(); text(name, pos[k][0], pos[k][1], 20, INK, 'center', 'bold'); });
+    },
+  },
+  title: {
+    update() {
+      const go = pressed('Enter') || pressed('Space') || clicks.length > 0;
+      clicks.length = 0;
+      if (go) {
+        if (!load()) reset();
+        scene = 'play';
+        events.push({ type: 'start' });
+      }
+    },
+    draw() {
+      const t = clock.now();
+      ctx.drawImage(paperCanvas, 0, 0);
+      drawSun(980, 150, 60);
+      ctx.save(); ctx.scale(W / 766, 1); drawMountains(766, null); ctx.restore();
+      drawCloud(300, 160, 1.2, 1); drawCloud(1000, 300, 0.9, 0.9);
+      drawAura(W / 2, 560, 1, t, 1, 2); drawCultivator(W / 2, 560, 1, t, 1, 0);
+      drawSeal(W / 2 - 300, 60, 64, 190, ['Mặc', 'Tiên', 'Lộ'], 22);
+      text(TITLE, W / 2 + 40, 120, 72, INK, 'center', 'bold');
+      text('con đường tu tiên vẽ bằng mực', W / 2 + 40, 175, 22, INK2);
+      ctx.fillStyle = 'rgba(248,242,228,0.88)'; ctx.fillRect(W / 2 - 330, 218, 660, 170);
+      ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.strokeRect(W / 2 - 330, 218, 660, 170);
+      CONTROLS.forEach((c, i) => text(c, W / 2, 248 + i * 36, 20, INK));
+      const pulse = 0.6 + Math.sin(t * 3) * 0.4;
+      ctx.globalAlpha = pulse;
+      text(hasSave() ? 'Bấm hoặc nhấn Enter để tiếp tục tu luyện' : 'Bấm hoặc nhấn Enter để bắt đầu', W / 2, H - 40, 26, CINNABAR, 'center', 'bold');
+      ctx.globalAlpha = 1;
+    },
+  },
+  play: {
+    update(dt) {
+      if (pressed('KeyP') || pressed('Escape')) { scene = 'pause'; clicks.length = 0; return; }
+      const s = state;
+      s.t += dt; s.totalTime += dt; s.lifeTime += dt;
+      // pointer presses
+      while (clicks.length) {
+        const p = clicks.shift();
+        if (s.away && p.x < 766) { s.away = null; continue; }
+        if (inRect(p, BTN_MEDITATE) || (p.x < 766 && Math.hypot(p.x - HERO.x, p.y - (HERO.y - 70)) < 90)) meditate();
+        else if (inRect(p, BTN_BREAK)) breakthrough();
+        else if (inRect(p, BTN_PRESTIGE) && s.realm >= tune.prestige_min_realm) prestige();
+        else visibleRows().forEach(({ i, locked }, k) => { if (!locked && inRect(p, rowRect(k))) buy(i); });
+        if (scene !== 'play') return;
+      }
+      if (pressed('Space')) meditate();
+      if (pressed('KeyB')) breakthrough();
+      if (scene !== 'play') return;
+      for (let i = 0; i < SOURCES.length; i++) if (pressed('Digit' + (i + 1)) || pressed('Numpad' + (i + 1))) buy(i);
+      // the flow
+      earn(production() * dt);
+      if (state.tamma > 0) state.tamma = Math.max(0, state.tamma - dt);
+      updateFx(dt);
+      state.score = state.realm;
+      state.saveT += dt;
+      if (state.saveT >= tune.autosave_s) { state.saveT = 0; save(); }
+    },
+    draw() {
+      drawPainting(state.t, true);
+      drawPanel();
+    },
+  },
+  pause: {
+    update() {
+      clicks.length = 0;
+      if (pressed('KeyP') || pressed('Escape')) scene = 'play';
+      if (pressed('KeyR') && down.has('ShiftLeft')) { wipeSave(); reset(); scene = 'title'; }
+    },
+    draw() {
+      scenes.play.draw();
+      ctx.fillStyle = 'rgba(29,26,23,0.55)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = PAPER; ctx.fillRect(W / 2 - 280, H / 2 - 110, 560, 220);
+      ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.strokeRect(W / 2 - 280, H / 2 - 110, 560, 220);
+      text('Tạm dừng', W / 2, H / 2 - 60, 44, INK, 'center', 'bold');
+      text('P hoặc Esc: tu tiếp', W / 2, H / 2, 22, INK2);
+      text('Shift + R: xóa toàn bộ, tu lại từ đầu', W / 2, H / 2 + 40, 18, CINNABAR);
+      text('Tiến độ tự lưu trong trình duyệt', W / 2, H / 2 + 76, 16, INK2);
+    },
+  },
+  results: {
+    update(dt) {
+      state.t += dt; updateFx(dt);
+      const go = pressed('Enter') || clicks.length > 0; clicks.length = 0;
+      if (go) { wipeSave(); reset(); scene = 'title'; }
+    },
+    draw() {
+      const t = state.t;
+      ctx.drawImage(paperCanvas, 0, 0);
+      ctx.save(); ctx.scale(W / 766, 1); drawMountains(766, AURA[9]); ctx.restore();
+      // ascending: the cultivator rises into the clouds
+      const rise = Math.min(1, t / 6) * 160;
+      drawAura(W / 2, 600 - rise, 1.3, t, 9, 8);
+      drawCultivator(W / 2, 600 - rise, 1, t, 9, 0);
+      drawCloud(W / 2 - 160, 620 - rise * 0.3, 1.4, 1); drawCloud(W / 2 + 170, 640 - rise * 0.3, 1.2, 1);
+      drawCrane(220 + (t * 40) % 900, 170, 1, t);
+      drawSeal(60, 60, 64, 190, ['Phi', 'Thăng'], 24);
+      text('Phi Thăng', W / 2, 90, 72, INK, 'center', 'bold');
+      text(state.gained || '', W / 2, 150, 24, INK2);
+      text(`Đột phá thành công ${state.tries - state.fails}/${state.tries} lần · Đạo tâm ${state.daotam}`, W / 2, 186, 20, INK2);
+      text('Bấm hoặc Enter: tu lại từ đầu', W / 2, H - 30, 22, CINNABAR, 'center', 'bold');
+      if (state.flash) { const k = state.flash.t / state.flash.dur; ctx.globalAlpha = Math.max(0, 1 - k); ctx.fillStyle = state.flash.c; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
+    },
+  },
+};
+
+// ---- Loop: fixed step, frame time clamped ---------------------------------------------
+function step() {
+  if (pressed('KeyM')) { setMuted(!muted); hit.delete('KeyM'); }
+  scenes[scene].update(STEP); hit.clear();
+}
+let last, acc = 0, ALPHA = 1;
+function tick() {
+  const now = clock.now();
+  acc += Math.min(now - last, 0.25); last = now;
+  while (acc >= STEP) { step(); acc -= STEP; }
+  ALPHA = acc / STEP;
+  drawFrame();
+}
+function drawFrame() {
+  scenes[scene].draw();
+  if (muted) text('tắt tiếng (M)', W - 20, H - 4 - 8, 14, scene === 'play' ? '#f3e9d4' : INK2, 'right');
+}
+function frame() { tick(); requestAnimationFrame(frame); }
+function timer() { if (document.visibilityState === 'visible' && clock.now() - last > 0.1) tick(); }
+
+// ---- What a check can read and drive ----------------------------------------------------
+window.game = {
+  get scene() { return scene; },
+  get state() { return state; },
+  press(code) { hit.add(code); },
+  hold(code, on) { on ? down.add(code) : down.delete(code); },
+  get events() { return events; },
+  step(n = 1, draw = true, alpha = 1) {
+    for (let i = 0; i < n; i++) step();
+    if (draw) { ALPHA = alpha; drawFrame(); }
+  },
+};
+
+buildPaper(); buildRidges();
+reset();
+scene = params.get('scene') || 'title';
+last = clock.now();
+if (params.get('manual') === '1') drawFrame();
+else { requestAnimationFrame(frame); setInterval(timer, 50); }
+</script>
+</body>
+</html>
