@@ -1,0 +1,123 @@
+# The one-shot's small check (check-run/1).
+# Written by one-shot-check.sh --record: the results are /prototype's reading of
+# evidence/self-check.tsv; never edited by hand.
+kind: check-run/1
+engine: web
+browser: "HeadlessChrome/158.0.0.0"
+time: "2026-11-25 16:51:26"
+checks:
+  - id: boots
+    result: pass
+    evidence:
+      - "evidence/self-check.tsv"
+  - id: shot
+    result: pass
+    evidence:
+      - "evidence/play.png"
+  - id: outlines
+    result: pass
+    evidence:
+      - "evidence/figures.png"
+  - id: brief-words
+    result: pass
+    evidence:
+      - "evidence/brief-words.tsv"
+  - id: emoji
+    result: pass
+    evidence:
+      - "evidence/self-check.tsv"
+  - id: nearest-game
+    result: pass
+    evidence:
+      - "evidence/nearest-game.txt"
+brief_checklist:
+  - id: L1
+    result: pass
+    evidence: "evidence/play.png"
+    item: "Look: tranh thủy mặc 2D. Nền là giấy cổ màu ngà, núi và mây vẽ bằng mực loang. Màu đỏ son dùng cho nút và con dấu, mực đen dùng cho chữ và hình. Hào quang quanh người tu đổi màu theo cảnh giới: trắng, lục, lam, vàng, tím. Mỗi nguồn tu luyện mua được sẽ hiện thành hình trong tranh, ví dụ một đóa sen, một lò đan hay một trận pháp. Mọi hình đều được vẽ, không dùng emoji hay hình tròn trơn. *(provisional)*"
+  - id: L2
+    result: pass
+    evidence: "index.html:274"
+    item: "References: các game idle kiểu Cookie Clicker (giá tăng dần, chuyển thế), tranh thủy mặc Trung Hoa (hình ảnh). *(guessed)*"
+  - id: L3
+    result: pass
+    evidence: "evidence/play.png"
+    item: "View: 2D · Camera: tĩnh. Bức tranh dần đầy lên theo những gì anh mua. *(provisional)*"
+  - id: F1
+    result: pass
+    evidence: "index.html:293"
+    item: "Thiền định bằng cách bấm, linh khí bay số"
+  - id: F2
+    result: pass
+    evidence: "evidence/figures.png"
+    item: "6–8 nguồn tu luyện, giá tăng dần, mỗi nguồn hiện hình trong tranh"
+  - id: F3
+    result: pass
+    evidence: "index.html:319"
+    item: "9 cảnh giới, đột phá có tỉ lệ thành công, thất bại thì mất tu vi và bị tâm ma, lần sau tỉ lệ tăng"
+  - id: F4
+    result: pass
+    evidence: "index.html:98"
+    item: "Mốc của từng nguồn (10/25/50 cái) nhân sản lượng, có hiệu ứng bùng sáng"
+  - id: F5
+    result: pass
+    evidence: "index.html:359"
+    item: "Chuyển thế đổi lấy Đạo tâm, nhân mọi sản lượng, nút hiện trước số Đạo tâm sẽ nhận"
+  - id: F6
+    result: pass
+    evidence: "index.html:207"
+    item: "Linh khí vẫn tăng khi đóng tab, quay lại thì báo đã vắng bao lâu và thu được bao nhiêu"
+  - id: F7
+    result: pass
+    evidence: "index.html:104"
+    item: "Số lớn viết gọn (nghìn, triệu, tỉ...), số đếm lên mượt, tự lưu vào trình duyệt"
+  - id: S1
+    result: pass
+    evidence: "index.html:319"
+    item: "đột phá cảnh giới · in the slice"
+  - id: M1
+    result: pass
+    evidence: "evidence/play.png"
+    item: "Màn hình hiện một người ngồi thiền trên tảng đá dưới chân núi."
+  - id: M2
+    result: pass
+    evidence: "index.html:296"
+    item: "Bấm \"Thiền định\" thì có số linh khí bay lên."
+  - id: M3
+    result: pass
+    evidence: "config.js:15"
+    item: "Khoảng 10 lần bấm là đủ mua \"Thổ Nạp Quyết\", và từ đó linh khí tự chảy về."
+  - id: M4
+    result: pass
+    evidence: "index.html:999"
+    item: "Mua thêm vài nguồn, thanh tu vi đầy dần, rồi nút đỏ \"Đột phá\" sáng lên."
+  - id: M5
+    result: pass
+    evidence: "index.html:265"
+    item: "Lần đột phá đầu tiên lên Luyện Khí tầng sau gần như chắc chắn thành công: hào quang bùng sáng, cả bức tranh đổi sắc, tốc độ tu luyện nhân lên *(guessed)*."
+  - id: C1
+    result: not_run
+    mark: not assessed
+    why: "base chance falls per realm from Luyện Khí on; whether it lands at minutes 5-8 needs a real play"
+    evidence: "index.html:265"
+    item: "Từ khoảng phút thứ 5 đến 8 (Trúc Cơ, Kết Đan), tỉ lệ đột phá bắt đầu giảm."
+  - id: C2
+    result: pass
+    evidence: "index.html:347"
+    item: "Thất bại mất khoảng 30% tu vi đã gom và gây \"tâm ma\", làm chậm tu luyện trong 30 giây."
+  - id: C3
+    result: pass
+    evidence: "index.html:270"
+    item: "Bù lại, mỗi lần thất bại cộng tỉ lệ cho lần sau."
+  - id: C4
+    result: not_run
+    mark: not assessed
+    why: "Chuyển thế opens at Nguyên Anh; whether the first wall comes at minutes 15-25 needs a real play"
+    evidence: "index.html:275"
+    item: "Khoảng 15 đến 25 phút thì người chơi chạm tường lần đầu, và \"Chuyển thế\" mở ra *(provisional)*."
+measures:
+  - id: step-time
+    value: 1.000
+    unit: ms
+    by: browser
+    detail: "mean 0.018 ms, slowest 1.000 ms, 278 steps"

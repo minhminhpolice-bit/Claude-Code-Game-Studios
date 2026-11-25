@@ -1,0 +1,68 @@
+time	2026-11-25 17:11:05
+keep	lines	0	pinned	0
+checklist	L1	noevidence	evidence/play.png	Look: tranh thủy mặc 2D. Nền là giấy cổ màu ngà, núi và mây vẽ bằng mực loang. Màu đỏ son dùng cho nút và con dấu, mực đen dùng cho chữ và hình. Hào quang quanh người tu đổi màu theo cảnh giới: trắng, lục, lam, vàng, tím. Mỗi nguồn tu luyện mua được sẽ hiện thành hình trong tranh, ví dụ một đóa sen, một lò đan hay một trận pháp. Mọi hình đều được vẽ, không dùng emoji hay hình tròn trơn. *(provisional)*	ink-wash paper, ink mountains and clouds, cinnabar seal and buttons; aura colour per realm (AURA, index.html:68); each source drawn in the painting (index.html:883)
+checklist	L2	pass	index.html:274	References: các game idle kiểu Cookie Clicker (giá tăng dần, chuyển thế), tranh thủy mặc Trung Hoa (hình ảnh). *(guessed)*	rising costs (srcCost) and Chuyển thế prestige; ink-wash painting look in evidence/play.png
+checklist	L3	noevidence	evidence/play.png	View: 2D · Camera: tĩnh. Bức tranh dần đầy lên theo những gì anh mua. *(provisional)*	2D, fixed camera; painting fills with each source bought (drawPainting, index.html:883-895)
+checklist	F1	pass	index.html:293	Thiền định bằng cách bấm, linh khí bay số	click or Space meditates; a +N number floats up from the cultivator
+checklist	F2	pass	evidence/figures.png	6–8 nguồn tu luyện, giá tăng dần, mỗi nguồn hiện hình trong tranh	8 sources, cost × cost_growth each copy, each drawn in the painting
+checklist	F3	pass	index.html:319	9 cảnh giới, đột phá có tỉ lệ thành công, thất bại thì mất tu vi và bị tâm ma, lần sau tỉ lệ tăng	10 realms Phàm Nhân to Độ Kiếp then Phi Thăng; roll vs chance; fail loses fail_loss tu vi, sets tâm ma, adds Kinh nghiệm
+checklist	F4	pass	index.html:98	Mốc của từng nguồn (10/25/50 cái) nhân sản lượng, có hiệu ứng bùng sáng	milestones 10/25/50/100/200 multiply that source; ring burst, float text and chime in buy()
+checklist	F5	pass	index.html:359	Chuyển thế đổi lấy Đạo tâm, nhân mọi sản lượng, nút hiện trước số Đạo tâm sẽ nhận	Chuyển thế keeps Đạo tâm (+daotam_bonus each); button shows the gain before pressing (index.html:936)
+checklist	F6	pass	index.html:207	Linh khí vẫn tăng khi đóng tab, quay lại thì báo đã vắng bao lâu và thu được bao nhiêu	load() credits away time × offline_rate and shows the Bế quan panel (index.html:224)
+checklist	F7	pass	index.html:104	Số lớn viết gọn (nghìn, triệu, tỉ...), số đếm lên mượt, tự lưu vào trình duyệt	fmt() uses nghìn/triệu/tỉ; shown totals ease toward the real ones (index.html:412); autosave to localStorage (self-check saved row)
+checklist	S1	pass	index.html:319	đột phá cảnh giới · in the slice	breakthrough built for real with chance, overflow bonus, fail cost
+checklist	M1	noevidence	evidence/play.png	Màn hình hiện một người ngồi thiền trên tảng đá dưới chân núi.	cultivator seated on a rock below the mountains
+checklist	M2	pass	index.html:296	Bấm "Thiền định" thì có số linh khí bay lên.	meditate pushes a floating +N linh khí number
+checklist	M3	pass	config.js:15	Khoảng 10 lần bấm là đủ mua "Thổ Nạp Quyết", và từ đó linh khí tự chảy về.	first source costs 10 and a click gives 1: ten clicks buy Thổ Nạp Quyết, which then earns per second
+checklist	M4	pass	index.html:999	Mua thêm vài nguồn, thanh tu vi đầy dần, rồi nút đỏ "Đột phá" sáng lên.	tu vi bar fills; the red Đột phá button turns active once tu vi reaches the threshold
+checklist	M5	pass	index.html:265	Lần đột phá đầu tiên lên Luyện Khí tầng sau gần như chắc chắn thành công: hào quang bùng sáng, cả bức tranh đổi sắc, tốc độ tu luyện nhân lên *(guessed)*.	leaving Phàm Nhân is a sure success; flash, aura ring, realm tint on the painting, production × realm_mult
+checklist	C1	not_assessed	index.html:265	Từ khoảng phút thứ 5 đến 8 (Trúc Cơ, Kết Đan), tỉ lệ đột phá bắt đầu giảm.	base chance falls per realm from Luyện Khí on; whether it lands at minutes 5-8 needs a real play
+checklist	C2	pass	index.html:347	Thất bại mất khoảng 30% tu vi đã gom và gây "tâm ma", làm chậm tu luyện trong 30 giây.	fail loses 30% tu vi and starts 30 s of tâm ma at ×0.5 production, drawn as dark wisps
+checklist	C3	pass	index.html:270	Bù lại, mỗi lần thất bại cộng tỉ lệ cho lần sau.	each failure adds exp_bonus to the next chance
+checklist	C4	not_assessed	index.html:275	Khoảng 15 đến 25 phút thì người chơi chạm tường lần đầu, và "Chuyển thế" mở ra *(provisional)*.	Chuyển thế opens at Nguyên Anh; whether the first wall comes at minutes 15-25 needs a real play
+browser	HeadlessChrome/158.0.0.0
+scene	play	0	title
+scene	play	1	play
+digits	log	20px "Noto Serif", "Times New Roman", Georgia, serif	tabular	0
+digits	log	bold 20px "Noto Serif", "Times New Roman", Georgia, serif	tabular	0
+digits	log	14px "Noto Serif", "Times New Roman", Georgia, serif	tabular	0
+digits	log	bold 34px "Noto Serif", "Times New Roman", Georgia, serif	tabular	0
+digits	log	18px "Noto Serif", "Times New Roman", Georgia, serif	tabular	0
+digits	log	16px "Noto Serif", "Times New Roman", Georgia, serif	tabular	0
+digits	log	bold 16px "Noto Serif", "Times New Roman", Georgia, serif	tabular	0
+digits	log	bold 17px "Noto Serif", "Times New Roman", Georgia, serif	tabular	0
+measure	step-time	play	0.052	10.500	278
+lane	play	stop	4.6	159
+saved	play	278	localstorage	mac-tien-lo-v1
+uncaught	play	0
+text	play	canvas	31,36,65,53	24.0	4.87	inside	Mặc
+text	play	canvas	31,62,65,76	24.0	4.87	inside	Tiên
+text	play	canvas	37,88,59,105	24.0	4.87	inside	Lộ
+text	play	canvas	278,27,481,57	54.0	12.35	inside	Phàm Nhân
+text	play	canvas	333,654,427,673	28.5	15.52	inside	Thiền định
+text	play	canvas	327,680,433,693	21.0	15.52	inside	+1 linh khí · Space
+text	play	canvas	802,36,857,48	22.5	6.80	inside	Linh khí
+text	play	canvas	803,62,845,91	46.5	12.25	inside	7,7
+text	play	canvas	1189,68,1242,85	24.0	6.80	inside	1 / giây
+text	play	canvas	802,103,836,115	22.5	6.80	inside	Tu vi
+text	play	canvas	1199,103,1242,115	22.5	12.25	inside	17 / 50
+text	play	canvas	942,154,956,165	21.0	6.80	inside	đủ
+text	play	canvas	1017,154,1173,167	21.0	6.80	inside	tích thêm → cơ hội cao hơn
+text	play	canvas	927,204,1117,224	28.5	8.28	inside	Đột phá → Luyện Khí
+text	play	canvas	917,229,1128,243	21.0	8.28	inside	cần 32 tu vi nữa · cơ hội lúc đủ 100%
+text	play	canvas	802,269,920,287	24.0	12.25	inside	Nguồn tu luyện
+text	play	canvas	1109,271,1242,285	21.0	6.80	inside	bấm để mua · phím 1–8
+text	play	canvas	849,305,970,321	22.5	14.72	inside	1. Thổ Nạp Quyết
+text	play	canvas	848,324,971,339	21.0	8.16	inside	có 1 · +1/giây mỗi cái
+text	play	canvas	1227,306,1242,318	24.0	8.16	inside	11
+text	play	canvas	1111,327,1146,338	21.0	8.16	inside	10: ×2
+text	play	canvas	848,351,972,364	22.5	14.72	inside	2. Linh Thảo Viên
+text	play	canvas	848,370,971,385	21.0	8.16	inside	có 0 · +6/giây mỗi cái
+text	play	canvas	1225,352,1242,365	24.0	8.16	inside	80
+text	play	canvas	1111,373,1146,384	21.0	8.16	inside	10: ×2
+text	play	canvas	848,397,940,413	22.5	6.08	inside	Tụ Linh Liên
+text	play	canvas	848,417,972,431	21.0	6.08	inside	mở khi đạt Luyện Khí
+text	play	canvas	950,680,1094,694	21.0	6.80	inside	Đã tu 4 giây · đột phá 0/0
+screen	play	drawn
+shot	play	prototypes/mac-tien-lo/evidence/play.png
+responds	changed	4

@@ -1,0 +1,20 @@
+L1	pass	evidence/play.png	ink-wash paper, ink mountains and clouds, cinnabar seal and buttons; aura colour per realm (AURA, index.html:68); each source drawn in the painting (index.html:883)
+L2	pass	index.html:274	rising costs (srcCost) and Chuyển thế prestige; ink-wash painting look in evidence/play.png
+L3	pass	evidence/play.png	2D, fixed camera; painting fills with each source bought (drawPainting, index.html:883-895)
+F1	pass	index.html:293	click or Space meditates; a +N number floats up from the cultivator
+F2	pass	evidence/figures.png	8 sources, cost × cost_growth each copy, each drawn in the painting
+F3	pass	index.html:319	10 realms Phàm Nhân to Độ Kiếp then Phi Thăng; roll vs chance; fail loses fail_loss tu vi, sets tâm ma, adds Kinh nghiệm
+F4	pass	index.html:98	milestones 10/25/50/100/200 multiply that source; ring burst, float text and chime in buy()
+F5	pass	index.html:359	Chuyển thế keeps Đạo tâm (+daotam_bonus each); button shows the gain before pressing (index.html:936)
+F6	pass	index.html:207	load() credits away time × offline_rate and shows the Bế quan panel (index.html:224)
+F7	pass	index.html:104	fmt() uses nghìn/triệu/tỉ; shown totals ease toward the real ones (index.html:412); autosave to localStorage (self-check saved row)
+S1	pass	index.html:319	breakthrough built for real with chance, overflow bonus, fail cost
+M1	pass	evidence/play.png	cultivator seated on a rock below the mountains
+M2	pass	index.html:296	meditate pushes a floating +N linh khí number
+M3	pass	config.js:15	first source costs 10 and a click gives 1: ten clicks buy Thổ Nạp Quyết, which then earns per second
+M4	pass	index.html:999	tu vi bar fills; the red Đột phá button turns active once tu vi reaches the threshold
+M5	pass	index.html:265	leaving Phàm Nhân is a sure success; flash, aura ring, realm tint on the painting, production × realm_mult
+C1	not_assessed	index.html:265	base chance falls per realm from Luyện Khí on; whether it lands at minutes 5-8 needs a real play
+C2	pass	index.html:347	fail loses 30% tu vi and starts 30 s of tâm ma at ×0.5 production, drawn as dark wisps
+C3	pass	index.html:270	each failure adds exp_bonus to the next chance
+C4	not_assessed	index.html:275	Chuyển thế opens at Nguyên Anh; whether the first wall comes at minutes 15-25 needs a real play
